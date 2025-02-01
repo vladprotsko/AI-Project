@@ -1,0 +1,147 @@
+import os
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+import joblib
+
+# Define the data directory
+data_dir = './'
+
+# List of training and test files
+training_files = [
+    'medium_kneeheight_data.csv', 'heavy_floor_handles_data.csv', 'heavy_floor_overhead_data.csv',
+    'heavy_kneeheight_data.csv', 'medium_floor_uncomf_data.csv',
+    'Light_floor_1hand_data.csv', 'light_floor_incorrectposture_data.csv', 'light_kneeheight_data.csv',
+    'medium_floor_data.csv'
+]
+test_files = [
+    'Light_floor2_data.csv', 'heavy_floor_flat_data.csv'
+]
+
+
+# Function to extract labels from file names
+def extract_labels(file_name):
+    parts = file_name.lower().split('_')
+    weight = parts[0]  # "light", "medium", or "heavy"
+    height = 'not_floor' if 'kneeheight' in parts else 'floor'
+    return weight, height
+
+
+# Function to compute summary features (mean, std, min, max)
+def compute_features(data):
+    features = {}
+    for col in data.columns:
+        if data[col].dtype in ['float64', 'int64']:  # Only numerical columns
+            features[f'{col}_mean'] = data[col].mean()
+            features[f'{col}_std'] = data[col].std()
+            features[f'{col}_min'] = data[col].min()
+            features[f'{col}_max'] = data[col].max()
+    return features
+
+
+# Helper function to load and prepare data from files
+def prepare_data(file_list):
+    all_data = []
+    labels_weight = []
+    labels_height = []
+    for file_name in file_list:
+        file_path = os.path.join(data_dir, file_name)
+        data = pd.read_csv(file_path, skiprows=2)  # Read raw data
+        weight, height = extract_labels(file_name)  # Extract labels
+        features = compute_features(data)  # Compute summary statistics
+        all_data.append(features)  # Store computed features
+        labels_weight.append(weight)  # Store weight label
+        labels_height.append(height)  # Store height label
+
+    # Convert the list of feature dictionaries into a DataFrame
+    features_df = pd.DataFrame(all_data)
+    return features_df, labels_weight, labels_height
+
+
+# Prepare training and test datasets
+X_train, y_train_weight, y_train_height = prepare_data(training_files)
+X_test, y_test_weight, y_test_height = prepare_data(test_files)
+
+# Ensure all data is numerical (fill missing values with 0)
+X_train = X_train.fillna(0)
+X_test = X_test.fillna(0)
+
+# Label encoding for training and test labels (weight and height)
+y_train = pd.DataFrame({
+    'weight': pd.Categorical(y_train_weight).codes,
+    'height': pd.Categorical(y_train_height).codes
+})
+y_test = pd.DataFrame({
+    'weight': pd.Categorical(y_test_weight).codes,
+    'height': pd.Categorical(y_test_height).codes
+})
+
+# Get the label categories for decoding predictions later
+weight_map = pd.Categorical(y_train_weight).categories
+height_map = pd.Categorical(y_train_height).categories
+
+# Train the multi-output classifier
+multi_output_model = MultiOutputClassifier(RandomForestClassifier(random_state=42))
+multi_output_model.fit(X_train, y_train)
+
+# Predictions on the test data
+y_pred = multi_output_model.predict(X_test)
+y_pred_df = pd.DataFrame(y_pred, columns=y_test.columns)
+
+# Decode the predicted labels back to their original string values
+y_pred_decoded = {
+    'weight': [weight_map[pred] for pred in y_pred_df['weight']],
+    'height': [height_map[pred] for pred in y_pred_df['height']]
+}
+
+# Print predicted labels and actual labels for the test files
+print("Predicted vs Actual Labels for Test Files:")
+for i, file_name in enumerate(test_files):
+    weight_pred = y_pred_decoded['weight'][i]
+    height_pred = y_pred_decoded['height'][i]
+    weight_actual = y_test_weight[i]
+    height_actual = y_test_height[i]
+    print(
+        f"File: {file_name}, Predicted Weight: {weight_pred}, Actual Weight: {weight_actual}, Predicted Height: {height_pred}, Actual Height: {height_actual}")
+
+# Evaluation of the model (Classification Report)
+print("\nWeight Classification Report:")
+print(classification_report(y_test['weight'], y_pred_df['weight']))
+
+print("Height Classification Report:")
+print(classification_report(y_test['height'], y_pred_df['height']))
+
+# Accuracy for each label
+weight_accuracy = accuracy_score(y_test['weight'], y_pred_df['weight'])
+height_accuracy = accuracy_score(y_test['height'], y_pred_df['height'])
+print("Weight Classification Accuracy:", weight_accuracy)
+print("Height Classification Accuracy:", height_accuracy)
+
+# Confusion Matrices
+plt.figure(figsize=(10, 6))
+cm_weight = confusion_matrix(y_test['weight'], y_pred_df['weight'])
+sns.heatmap(cm_weight, annot=True, fmt='d', cmap='Blues')
+plt.title("Confusion Matrix for Weight Classification")
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.show()
+
+plt.figure(figsize=(10, 6))
+cm_height = confusion_matrix(y_test['height'], y_pred_df['height'])
+sns.heatmap(cm_height, annot=True, fmt='d', cmap='Blues')
+plt.title("Confusion Matrix for Height Classification")
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.show()
+
+# Save the model (optional)
+# joblib.dump(multi_output_model, 'multi_output_classification_model.pkl')
+# print("Multi-output model saved as 'multi_output_classification_model.pkl'")
+
+
+
+///////////////////////
+
